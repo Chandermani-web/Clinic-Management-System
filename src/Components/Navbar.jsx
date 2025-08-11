@@ -56,7 +56,7 @@ const Navbar = () => {
           <div className="flex-shrink-0">
             <h1 className="text-xl md:text-xl font-bold text-black">
               <i className="ri-nurse-fill text-blue-700 text-3xl"></i>
-              Clinic Management
+              Clinic Care
             </h1>
           </div>
 

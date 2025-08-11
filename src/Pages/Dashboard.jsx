@@ -4,6 +4,8 @@ import { useSelector } from "react-redux";
 import { getDatabase, ref, update } from "firebase/database";
 import useFetchTokens from "../Utils/FetchAllToken";
 import { useNavigate } from "react-router-dom";
+import { FiUser, FiCalendar, FiClock, FiSearch, FiPlus, FiUsers, FiFileText } from "react-icons/fi";
+import { RiStethoscopeLine, RiUserReceivedLine } from "react-icons/ri";
 
 const db = getDatabase();
 
@@ -11,43 +13,41 @@ const Dashboard = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [dateFilter, setDateFilter] = useState("today");
   const navigate = useNavigate();
-  // Signin Details
+  
+  // User details
   const UserDetails = useSelector((state) => state.signin);
   const UserActiveRole = UserDetails.activeRole;
 
-  // Patient Details
+  // Patient data
   const Patients = useFetchTokens();
-  const TotalPatients = Patients.length;
-  const TodayPatients = Patients.filter(
-    (patient) => patient.date === new Date().toLocaleDateString()
-  );
-  const completeTodayPatients = TodayPatients.filter(
-    (patient) => patient.inprogress === false
-  );
-  const ActiveTokens = Patients.filter((patient) => patient.inprogress === true);
-
   const todayDate = new Date().toLocaleDateString();
+  
+  // Dashboard metrics
+  const TotalPatients = Patients.length;
+  const TodayPatients = Patients.filter(patient => patient.date === todayDate);
+  const completeTodayPatients = TodayPatients.filter(patient => !patient.inprogress);
+  const ActiveTokens = TodayPatients.filter(patient => patient.inprogress);
+  const pendingPercentage = TodayPatients.length > 0 
+    ? Math.round((ActiveTokens.length / TodayPatients.length) * 100) 
+    : 0;
 
-  // Doctor Dashboard
-  const filteredPatients = Patients.filter((patient) => {
-    const namematch = patient.patientname
-      ?.toLowerCase()
-      .includes(searchTerm.toLowerCase());
+  // Filtered patients based on role
+  const filteredPatients = Patients.filter(patient => {
+    const nameMatch = patient.patientname?.toLowerCase().includes(searchTerm.toLowerCase());
+    const dateMatch = dateFilter === "today" ? patient.date === todayDate : true;
+    return nameMatch && dateMatch;
+  }).sort((a, b) => (a.inprogress === b.inprogress ? 0 : a.inprogress ? -1 : 1));
 
-    let dateMatch = true;
-    if (dateFilter === "today") {
-      dateMatch = patient.date === todayDate;
-    }
+  const FilterPatients = TodayPatients.filter(patient => 
+    patient.inprogress && patient.patientname?.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
-    return namematch && dateMatch;
-  }).sort((a, b) => (a.inprogress === b.inprogress ? 0 : a.active ? -1 : 1));
-
-  const changestatus = async (status, TokenNumber, Name) => {
+  const changeStatus = async (status, TokenNumber, Name) => {
     const patientRef = ref(db, `assigntokens/${TokenNumber}(${Name})`);
 
     try {
       await update(patientRef, {
-        inprogress: status === "Active" ? true : false,
+        inprogress: status === "Active"
       });
 
       toast.success("✅ Token status updated successfully", {
@@ -61,262 +61,255 @@ const Dashboard = () => {
     }
   };
 
-  // Receptionist Dashboard
-
-  const FilterPatients = TodayPatients.filter((patient) => {
-    const namematch =
-      patient.inprogress === true &&
-      patient.patientname?.toLowerCase().includes(searchTerm.toLowerCase());
-      
-    return namematch;
-  });
+  // Status badge component
+  const StatusBadge = ({ status }) => (
+    <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+      status === "Pending" ? "bg-amber-100 text-amber-800" :
+      status === "Completed" ? "bg-green-100 text-green-800" :
+      "bg-gray-100 text-gray-800"
+    }`}>
+      {status}
+    </span>
+  );
 
   return (
-    <div className="flex justify-center">
-      <div className="flex flex-col py-10 xl:w-[80%] gap-6">
-        {UserActiveRole === "doctor" ? (
-          <div>
-            <h1 className="text-2xl text-black font-bold">Doctor Dashboard</h1>
-            <p className="text-zinc-400 text-xs">
-              Manage your patient and appointments
-            </p>
+    <div className="min-h-screen bg-gray-50 p-4 md:p-6">
+      <div className="max-w-7xl mx-auto">
+        {/* Header */}
+        <header className="mb-8">
+          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+            <div>
+              <h1 className="text-2xl md:text-3xl font-bold text-gray-800">
+                {UserActiveRole === "doctor" ? "Doctor Dashboard" : "Reception Dashboard"}
+              </h1>
+              <p className="text-gray-500 text-sm">
+                {UserActiveRole === "doctor" 
+                  ? "Manage your patients and appointments" 
+                  : "Handle patient tokens and appointments"}
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="relative">
+                <FiSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search patients..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition w-full md:w-64"
+                />
+              </div>
+              {UserActiveRole === "doctor" && (
+                <select
+                  value={dateFilter}
+                  onChange={(e) => setDateFilter(e.target.value)}
+                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
+                >
+                  <option value="all">All Patients</option>
+                  <option value="today">Today Only</option>
+                </select>
+              )}
+            </div>
           </div>
-        ) : (
-          <div>
-            <h1 className="text-2xl text-black font-bold">
-              Receptionist Dashboard
-            </h1>
-            <p className="text-zinc-400 text-xs">
-              Handles patient tokens and appointments
-            </p>
-          </div>
-        )}
+        </header>
 
         {/* KPI Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
           {[
             {
-              heading: "Total Patients",
+              title: "Total Patients",
               value: TotalPatients,
-              icon: "ri-group-line",
-              last: "+12 from last month",
+              icon: <FiUsers className="text-blue-500" size={20} />,
+              description: "All registered patients",
+              trend: "text-blue-500"
             },
             {
-              heading: "Today Patients",
+              title: "Today's Patients",
               value: TodayPatients.length,
-              icon: "ri-calendar-2-line",
-              last: `Completed Patient: ${completeTodayPatients.length}`,
+              icon: <FiCalendar className="text-green-500" size={20} />,
+              description: `Completed: ${completeTodayPatients.length}`,
+              trend: "text-green-500"
             },
             {
-              heading: "Active Tokens",
+              title: "Active Tokens",
               value: ActiveTokens.length,
-              icon: "ri-time-line",
-              last: "Waiting...",
-            },
-          ].map((field, i) => (
-            <div
-              key={i}
-              className="p-5 rounded-xl bg-white border border-gray-200 shadow-sm hover:shadow-md transition flex flex-col gap-2"
-            >
-              <div className="flex justify-between font-semibold text-sm text-gray-500">
-                <h4 className="font-extrabold">{field.heading}</h4>
-                <i className={`${field.icon} font-light text-gray-500`}></i>
-              </div>
-              <div className="ml-1 leading-tight">
-                <h1 className={`${i === 2 ? "text-2xl font-bold text-blue-600" : "text-2xl font-semibold"}`}>{field.value}</h1>
-                <p className={`${i === 1 ? "text-[11px] text-emerald-600 font-medium" : "text-[11px] text-gray-500"}`}>{field.last}</p>
+              icon: <FiClock className="text-amber-500" size={20} />,
+              description: `${pendingPercentage}% pending`,
+              trend: "text-amber-500"
+            }
+          ].map((card, index) => (
+            <div key={index} className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition">
+              <div className="flex justify-between items-start">
+                <div>
+                  <p className="text-sm font-medium text-gray-500 mb-1">{card.title}</p>
+                  <h3 className="text-2xl font-bold mb-2">{card.value}</h3>
+                  <p className={`text-xs ${card.trend}`}>{card.description}</p>
+                </div>
+                <div className="p-2 bg-gray-50 rounded-lg">
+                  {card.icon}
+                </div>
               </div>
             </div>
           ))}
         </div>
 
-        <div className="w-full mt-6 flex justify-between gap-6">
-          {/* Left panel */}
-          <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm xl:flex-1">
-            {UserActiveRole === "doctor" ? (
-              // Doctor Dashboard
-              <div className="flex flex-col gap-5">
+        {/* Main Content */}
+        <div className="flex flex-col lg:flex-row gap-6">
+          {/* Left Panel - Patient List */}
+          <div className="flex-1 bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+            <div className="p-6 border-b border-gray-200">
+              <div className="flex items-center justify-between">
                 <div>
-                  <h1 className="text-xl font-semibold"><i className="ri-capsule-fill text-2xl text-blue-600"></i> Recent Patients</h1>
-                  <p className="text-zinc-700 text-xs">
-                    View and search patient records
+                  <h2 className="text-xl font-semibold flex items-center gap-2">
+                    {UserActiveRole === "doctor" ? (
+                      <RiStethoscopeLine className="text-blue-500" size={24} />
+                    ) : (
+                      <RiUserReceivedLine className="text-blue-500" size={24} />
+                    )}
+                    {UserActiveRole === "doctor" ? "Recent Patients" : "Active Tokens"}
+                  </h2>
+                  <p className="text-sm text-gray-500 mt-1">
+                    {UserActiveRole === "doctor" 
+                      ? "View and manage patient records" 
+                      : "Manage today's patient tokens"}
                   </p>
                 </div>
+              </div>
+            </div>
 
-                <div className="flex flex-col gap-4">
-                  <div className="flex gap-4">
-                    <div className="flex-1 flex gap-3 border border-gray-300 bg-gray-50 rounded-lg p-2">
-                      <i className="ri-search-line text-gray-400"></i>
-                      <input
-                        type="text"
-                        placeholder="search patient by name..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        className="outline-0 bg-transparent w-full capitalize"
-                      />
-                    </div>
-                    <select
-                      value={dateFilter}
-                      onChange={(e) => setDateFilter(e.target.value)}
-                      className="border border-gray-300 rounded-lg p-2 text-sm bg-gray-50"
-                    >
-                      <option value="all">All</option>
-                      <option value="today">Today</option>
-                    </select>
-                  </div>
-
-                  <div className="flex flex-col gap-4">
-                    {filteredPatients.map((patient, index) => (
-                      <div
-                        key={index}
-                        className="flex justify-between p-3 border border-gray-200 rounded-xl hover:bg-gray-50 transition"
-                      >
-                        {/* Left panel */}
-                        <div className="flex flex-col gap-1">
-                          {/* left-top panel */}
-                          <div className="flex gap-3">
-                            <span className="px-5 py-3 text-sm bg-blue-50 text-blue-600 rounded-full text-center font-bold">
-                              {patient.patientname[0]}
-                            </span>
-                            <div>
-                              <h2 className="text-sm capitalize">
-                                {patient.patientname}
-                              </h2>
-                              <p className="text-xs text-gray-400">
-                                Age: {patient.patientage}
-                              </p>
-                            </div>
-                          </div>
-                          {/* left-bottom panel */}
-                          <div>
-                            <p className="text-gray-400 text-xs">
-                              {patient.patientsymptoms}
-                            </p>
-                          </div>
+            <div className="divide-y divide-gray-100">
+              {(UserActiveRole === "doctor" ? filteredPatients : FilterPatients).length > 0 ? (
+                (UserActiveRole === "doctor" ? filteredPatients : FilterPatients).map((patient, index) => (
+                  <div key={index} className="p-4 hover:bg-gray-50 transition">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 rounded-full bg-blue-50 flex items-center justify-center text-blue-600 font-bold">
+                          {patient.patientname[0]}
                         </div>
-
-                        {/* Right panel */}
-                        <div className="">
-                          {patient.inprogress ? (
-                            <h1
-                              className="bg-amber-500 text-white text-xs py-1 px-4 rounded-2xl text-center cursor-pointer"
-                              onClick={() => {
-                                changestatus(
-                                  "InActive",
-                                  patient.TokenNumber,
-                                  patient.patientname
-                                );
-                              }}
-                            >
-                              Pending
-                            </h1>
-                          ) : (
-                            <h1
-                              className="bg-emerald-600 text-white text-xs py-1 px-4 rounded-2xl text-center cursor-pointer"
-                            >
-                              Completed
-                            </h1>
-                          )}
-                          <p className="text-xs text-gray-400">
-                            Last Visit: {patient.date}
-                          </p>
+                        <div>
+                          <h3 className="font-medium capitalize">{patient.patientname}</h3>
+                          <div className="flex items-center gap-3 mt-1">
+                            <span className="text-xs text-gray-500">Age: {patient.patientage}</span>
+                            {UserActiveRole === "doctor" && (
+                              <span className="text-xs text-gray-500 truncate max-w-xs">
+                                {patient.patientsymptoms}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
-                    ))}
-                    <ToastContainer />
+                      <div className="flex items-center gap-4">
+                        <div className="text-right">
+                          <p className="text-xs text-gray-500">{patient.time}</p>
+                          <p className="text-xs text-gray-500">{patient.date}</p>
+                        </div>
+                        {UserActiveRole === "doctor" ? (
+                          <button
+                            onClick={() => patient.inprogress && changeStatus(
+                              "InActive",
+                              patient.TokenNumber,
+                              patient.patientname
+                            )}
+                            className={`px-4 py-1 rounded-full text-xs font-medium ${
+                              patient.inprogress 
+                                ? "bg-amber-100 text-amber-800 hover:bg-amber-200 cursor-pointer" 
+                                : "bg-green-100 text-green-800 cursor-default"
+                            }`}
+                          >
+                            {patient.inprogress ? "Pending" : "Completed"}
+                          </button>
+                        ) : (
+                          <StatusBadge status="Waiting" />
+                        )}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
-            ) : (
-              // Receptionist Dashboard
-              <div className="flex flex-col gap-5">
-                <div>
-                  <h1 className="text-xl font-semibold"><i className="ri-token-swap-fill text-blue-600 text-2xl"></i> Patient Tokens</h1>
-                  <p className="text-zinc-400 text-xs">
-                    Manage today's patient tokens
+                ))
+              ) : (
+                <div className="p-8 text-center">
+                  <div className="text-gray-300 mb-2">
+                    {UserActiveRole === "doctor" ? (
+                      <FiUser size={48} className="mx-auto" />
+                    ) : (
+                      <FiFileText size={48} className="mx-auto" />
+                    )}
+                  </div>
+                  <h3 className="text-gray-500 font-medium">No patients found</h3>
+                  <p className="text-gray-400 text-sm mt-1">
+                    {searchTerm ? "Try a different search term" : 
+                    UserActiveRole === "doctor" 
+                      ? "No patients scheduled for today" 
+                      : "No active tokens at the moment"}
                   </p>
                 </div>
-
-                <div className="flex flex-col gap-4">
-                  <div className="flex gap-4">
-                    <div className="flex-1 flex gap-3 border border-gray-300 bg-gray-50 rounded-lg p-2">
-                      <i className="ri-search-line text-gray-400"></i>
-                      <input
-                        type="text"
-                        placeholder="search patient by name..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        className="outline-0 bg-transparent w-full capitalize"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col gap-4">
-                    {FilterPatients.map((patient, index) => (
-                      <div
-                        key={index}
-                        className="flex justify-between p-3 border border-gray-200 rounded-xl items-center hover:bg-gray-50 transition"
-                      >
-                        {/* Left panel */}
-                        <div className="flex flex-col gap-1">
-                          {/* left-top panel */}
-                          <div className="flex gap-2">
-                            <span className="w-12 py-3 text-sm bg-blue-50 text-blue-600 text-center font-bold rounded-lg">
-                              {patient.TokenNumber}
-                            </span>
-                            <div>
-                              <h2 className="text-sm capitalize">
-                                {patient.patientname}
-                              </h2>
-                              <p className="text-xs text-gray-400">
-                                {patient.time}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Right panel */}
-                        <div className="">
-                          {patient.inprogress ? (
-                            <h1 className="bg-gray-200 text-gray-800 font-semibold text-xs py-1 px-4 rounded-2xl text-center cursor-pointer">
-                              Waiting
-                            </h1>
-                          ) : (
-                            false
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                    <ToastContainer />
-                  </div>
-                </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
-          {/* Right Panel */}
-         <div className="bg-white w-[28%] h-[250px] flex flex-col p-4 justify-between border border-gray-200 rounded-xl shadow-sm">
-            <div>
-              <h1 className="text-xl font-semibold">Quick Actions</h1>
-              <p className="text-zinc-400 text-[12px]">Frequently used actions</p>
+          {/* Right Panel - Quick Actions */}
+          <div className="lg:w-80 bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+            <div className="p-6 border-b border-gray-200">
+              <h2 className="text-xl font-semibold flex items-center gap-2">
+                <FiPlus className="text-blue-500" />
+                Quick Actions
+              </h2>
+              <p className="text-sm text-gray-500 mt-1">Frequently used actions</p>
             </div>
-            <div className="flex flex-col gap-3">
-              <button className="text-sm bg-gray-100 border p-2 rounded-xl border-gray-200 text-black flex gap-3 items-center hover:bg-blue-600 hover:text-white transition" onClick={()=>{
-                navigate("/Clinic-Management/assign-token")
-              }}><i className="ri-add-line"></i><span>Add New Patient</span></button>
-              <button className="text-sm bg-gray-100 border p-2 rounded-xl border-gray-200 text-black flex gap-3 items-center hover:bg-blue-600 hover:text-white transition" onClick={()=>{
-                toast("Loading today's Schedule...",{
-                  position: "bottom-right",
-                  autoClose: 2000,
-                })
-              }}><i className="ri-time-line"></i><span>View Today's Schedule</span></button>
-              <button className="text-sm bg-gray-100 border p-2 rounded-xl border-gray-200 text-black flex gap-3 items-center hover:bg-blue-600 hover:text-white transition" onClick={()=>{
-                navigate("/Clinic-Management/patient-records")
-              }}><i className="ri-group-line"></i><span>Patient Reports</span></button>
+            <div className="p-4 space-y-3">
+              <button 
+                onClick={() => navigate("/Clinic-Management/assign-token")}
+                className="w-full flex items-center gap-3 p-3 text-left rounded-lg hover:bg-blue-50 hover:text-blue-600 transition border border-gray-200"
+              >
+                <div className="p-2 bg-blue-100 rounded-lg text-blue-600">
+                  <FiPlus />
+                </div>
+                <div>
+                  <h3 className="font-medium">Add New Patient</h3>
+                  <p className="text-xs text-gray-500">Register a new patient</p>
+                </div>
+              </button>
+              
+              <button 
+                onClick={() => toast.info("Loading today's schedule...", { position: "top-right" })}
+                className="w-full flex items-center gap-3 p-3 text-left rounded-lg hover:bg-blue-50 hover:text-blue-600 transition border border-gray-200"
+              >
+                <div className="p-2 bg-blue-100 rounded-lg text-blue-600">
+                  <FiCalendar />
+                </div>
+                <div>
+                  <h3 className="font-medium">Today's Schedule</h3>
+                  <p className="text-xs text-gray-500">View daily appointments</p>
+                </div>
+              </button>
+              
+              <button 
+                onClick={() => navigate("/Clinic-Management/patient-records")}
+                className="w-full flex items-center gap-3 p-3 text-left rounded-lg hover:bg-blue-50 hover:text-blue-600 transition border border-gray-200"
+              >
+                <div className="p-2 bg-blue-100 rounded-lg text-blue-600">
+                  <FiUsers />
+                </div>
+                <div>
+                  <h3 className="font-medium">Patient Reports</h3>
+                  <p className="text-xs text-gray-500">View all patient records</p>
+                </div>
+              </button>
             </div>
           </div>
         </div>
       </div>
+
+      <ToastContainer 
+        position="top-right"
+        autoClose={3000}
+        hideProgressBar={false}
+        newestOnTop
+        closeOnClick
+        rtl={false}
+        pauseOnFocusLoss
+        draggable
+        pauseOnHover
+      />
     </div>
   );
 };

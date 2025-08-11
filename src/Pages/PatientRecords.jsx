@@ -35,9 +35,17 @@ const PatientRecords = () => {
   const [statusFilter, setStatusFilter] = useState("all");
   const navigate = useNavigate();
 
+  // Status calculations
   const totalPatients = tokenList.length;
-  const activeCount = tokenList.filter((p) => p.active).length;
-  const inactiveCount = totalPatients - activeCount;
+  const activeCount = tokenList.filter(p => p.active && !p.inprogress).length;
+  // const inactiveCount = tokenList.filter(p => !p.active).length;
+  const pendingCount = tokenList.filter(p => p.inprogress).length;
+  const completedCount = tokenList.filter(p => p.active && !p.inprogress && p.date !== new Date().toLocaleDateString()).length;
+  
+  const todayDate = new Date().toLocaleDateString();
+  const todayPatients = tokenList.filter(d => d.date === todayDate);
+  const todayPendingCount = todayPatients.filter(p => p.inprogress).length;
+  const previousPendingCount = pendingCount - todayPendingCount;
 
   const last7Days = useMemo(() => {
     const days = [];
@@ -51,65 +59,112 @@ const PatientRecords = () => {
   }, []);
 
   const tokensPerDay = useMemo(() => {
-    const counts = last7Days.map(
-      (d) => tokenList.filter((t) => t.date === d).length
-    );
-    return counts;
+    return last7Days.map(d => ({
+      date: d,
+      total: tokenList.filter(t => t.date === d).length,
+      pending: tokenList.filter(t => t.date === d && t.inprogress).length,
+      completed: tokenList.filter(t => t.date === d && !t.inprogress && !t.active).length
+    }));
   }, [last7Days, tokenList]);
 
-  const barData = useMemo(
-    () => ({
-      labels: last7Days,
-      datasets: [
-        {
-          label: "Patients (last 7 days)",
-          data: tokensPerDay,
-          backgroundColor: "rgba(37, 99, 235, 0.6)",
-          borderRadius: 10,
-        },
-      ],
-    }),
-    [last7Days, tokensPerDay]
-  );
+  const barData = useMemo(() => ({
+    labels: last7Days,
+    datasets: [
+      {
+        label: "Completed",
+        data: tokensPerDay.map(d => d.completed),
+        backgroundColor: "rgba(16, 185, 129, 1)",
+        borderRadius: 4,
+        borderWidth: 0
+      },
+      {
+        label: "Pending",
+        data: tokensPerDay.map(d => d.pending),
+        backgroundColor: "rgba(234, 179, 8, 1)",
+        borderRadius: 4,
+        borderWidth: 0
+      },
+      {
+        label: "Active",
+        data: tokensPerDay.map(d => d.total - d.pending - d.completed),
+        backgroundColor: "rgba(59, 130, 246, 1)",
+        borderRadius: 4,
+        borderWidth: 0
+      }
+    ]
+  }), [last7Days, tokensPerDay]);
 
   const barOptions = {
     responsive: true,
     plugins: {
-      legend: { display: false },
-      tooltip: { enabled: true },
+      legend: { 
+        position: 'top',
+        labels: {
+          usePointStyle: true,
+          boxWidth: 8
+        }
+      },
+      tooltip: { 
+        mode: 'index',
+        intersect: false
+      },
     },
     scales: {
-      x: { grid: { display: false } },
-      y: { grid: { color: "#f4f4f5" }, ticks: { stepSize: 1, precision: 0 } },
+      x: { 
+        stacked: true,
+        // grid: { display: false } 
+      },
+      y: { 
+        stacked: true,
+        grid: { color: "#f4f4f5" }, 
+        ticks: { stepSize: 1, precision: 0 } 
+      },
     },
+    maintainAspectRatio: false
   };
 
   const statusData = {
-    labels: ["Active", "Inactive"],
+    labels: ["Active", "Completed", "Pending Today", "Previous Pending"],
     datasets: [
       {
-        data: [activeCount, inactiveCount],
-        backgroundColor: ["#16a34a", "#9ca3af"],
-        borderWidth: 0,
+        data: [activeCount, completedCount, todayPendingCount, previousPendingCount],
+        backgroundColor: [
+          "rgba(59, 130, 246, 0.8)", 
+          "rgba(16, 185, 129, 0.8)",
+          "rgba(234, 179, 8, 0.8)",
+          "rgba(245, 158, 11, 0.8)"
+        ],
+        borderColor: [
+          "rgba(59, 130, 246, 1)", 
+          "rgba(16, 185, 129, 1)",
+          "rgba(234, 179, 8, 1)",
+          "rgba(245, 158, 11, 1)"
+        ],
+        borderWidth: 1,
       },
     ],
   };
 
   const filteredPatients = tokenList.filter((patient) => {
-    const namematch = patient.patientname
+    const nameMatch = patient.patientname
       ?.toLowerCase()
       .includes(searchTerm.toLowerCase());
-    const statusMatch =
-      statusFilter === "all"
-        ? true
-        : statusFilter === "active"
-        ? patient.active
-        : !patient.active;
+    
+    let statusMatch = true;
+    if (statusFilter === "active") {
+      statusMatch = patient.active && !patient.inprogress;
+    } else if (statusFilter === "inactive") {
+      statusMatch = !patient.active;
+    } else if (statusFilter === "pending") {
+      statusMatch = patient.inprogress;
+    } else if (statusFilter === "completed") {
+      statusMatch = !patient.active && !patient.inprogress;
+    }
 
-    return namematch && statusMatch;
+    return nameMatch && statusMatch;
   });
 
-  const changestatus = async (status, TokenNumber, Name) => {
+  const changeStatus = async (status, TokenNumber, Name) => {
     const patientRef = ref(db, `assigntokens/${TokenNumber}(${Name})`);
     const billsClearRef = child(patientRef, "bills");
 
@@ -118,127 +173,215 @@ const PatientRecords = () => {
 
       if (snapshot.exists()) {
         await update(patientRef, {
-          active: status === "Active" ? true : false,
+          active: status === "Active",
+          inprogress: false // Mark as not in progress when changing status
         });
 
-        toast.success("✅ Patient marked as inactive — bills cleared!", {
+        toast.success("✅ Patient status updated successfully!", {
           position: "top-right",
           autoClose: 1000,
           closeButton: true,
           closeOnClick: true,
         });
       } else {
-        toast.error("⚠️ Please clear all the bills before marking inactive");
+        toast.error("⚠️ Please clear all bills before marking as completed");
       }
     } catch (error) {
       toast.error(`❌ ${error.message}`);
     }
   };
 
+  const getStatusBadge = (patient) => {
+    if (patient.inprogress) {
+      return {
+        text: "In Progress",
+        color: "bg-yellow-500 hover:bg-yellow-600",
+        icon: "ri-loader-4-line"
+      };
+    }
+    if (patient.active) {
+      return {
+        text: "Active",
+        color: "bg-blue-600 hover:bg-blue-700",
+        icon: "ri-play-circle-line"
+      };
+    }
+    return {
+      text: "Completed",
+      color: "bg-green-600 hover:bg-green-700",
+      icon: "ri-checkbox-circle-line"
+    };
+  };
+
   return (
-    <div className="flex justify-center">
-      <div className="flex flex-col py-10 xl:w-[80%] gap-6">
-        <div>
-          <h1 className="text-2xl text-black font-bold">Patient Records</h1>
-          <p className="text-zinc-400 text-xs">
-            Manage patient information, visit history, and prescriptions.
+    <div className="flex justify-center bg-gray-50 min-h-screen">
+      <div className="flex flex-col py-8 xl:w-[90%] gap-6 px-4">
+        {/* Header */}
+        <div className="bg-white p-6 rounded-xl shadow-sm">
+          <h1 className="text-3xl font-bold text-gray-800">Patient Records Dashboard</h1>
+          <p className="text-gray-500 mt-2">
+            Comprehensive overview of patient statuses and treatment progress
           </p>
         </div>
 
         {/* KPI Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           {[
             {
               label: "Total Patients",
               value: totalPatients,
               icon: "ri-group-line",
-              color: "from-blue-500 to-indigo-500",
+              color: "from-indigo-500 to-blue-500",
+              trend: null
             },
             {
               label: "Active",
               value: activeCount,
               icon: "ri-play-circle-line",
-              color: "from-emerald-500 to-green-600",
+              color: "from-blue-500 to-cyan-500",
+              trend: "ri-arrow-up-line text-blue-500"
             },
             {
-              label: "Inactive",
-              value: inactiveCount,
-              icon: "ri-pause-circle-line",
-              color: "from-gray-400 to-gray-500",
+              label: "Pending",
+              value: pendingCount,
+              icon: "ri-loader-4-line",
+              color: "from-amber-400 to-yellow-500",
+              trend: todayPendingCount > 0 ? "ri-arrow-up-line text-amber-500" : "ri-arrow-down-line text-green-500"
             },
+            {
+              label: "Completed",
+              value: completedCount,
+              icon: "ri-checkbox-circle-line",
+              color: "from-green-500 to-emerald-600",
+              trend: "ri-arrow-up-line text-green-500"
+            }
           ].map((kpi, idx) => (
-            <div
-              key={idx}
-              className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm transition hover:shadow-md"
-            >
+            <div key={idx} className="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-xs text-gray-500">{kpi.label}</p>
+                  <p className="text-sm text-gray-500">{kpi.label}</p>
                   <p className="mt-1 text-2xl font-bold">{kpi.value}</p>
                 </div>
-                <div
-                  className={`p-3 rounded-full bg-gradient-to-br ${kpi.color} text-white`}
-                >
+                <div className={`p-3 rounded-lg bg-gradient-to-br ${kpi.color} text-white`}>
                   <i className={`${kpi.icon} text-xl`}></i>
                 </div>
               </div>
+              {kpi.trend && (
+                <div className="mt-3 flex items-center text-sm">
+                  <i className={`${kpi.trend} mr-1`}></i>
+                  <span className="text-gray-500">Today: {
+                    kpi.label === "Pending" ? todayPendingCount : 
+                    kpi.label === "Active" ? activeCount - todayPendingCount : 
+                    completedCount
+                  }</span>
+                </div>
+              )}
             </div>
           ))}
         </div>
 
-        {/* Charts */}
+        {/* Charts Section */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <div className="lg:col-span-2 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-gray-800">
-                Patients Trend (7 days)
+          {/* Patients Trend Chart */}
+          <div className="lg:col-span-2 bg-white p-5 rounded-xl shadow-sm border border-gray-100">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold text-gray-800">
+                Treatment Status Trend (7 days)
               </h3>
+              <div className="flex space-x-2">
+                <span className="flex items-center text-sm">
+                  <span className="w-3 h-3 bg-blue-500 rounded-full mr-1"></span>
+                  Active
+                </span>
+                <span className="flex items-center text-sm">
+                  <span className="w-3 h-3 bg-yellow-500 rounded-full mr-1"></span>
+                  Pending
+                </span>
+                <span className="flex items-center text-sm">
+                  <span className="w-3 h-3 bg-green-500 rounded-full mr-1"></span>
+                  Completed
+                </span>
+              </div>
             </div>
-            <Bar data={barData} options={barOptions} height={120} />
+            <div className="h-80">
+              <Bar data={barData} options={barOptions} />
+            </div>
           </div>
-          <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-gray-800">
-                Status Split
-              </h3>
+
+          {/* Status Distribution Chart */}
+          <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
+            <h3 className="text-lg font-semibold text-gray-800 mb-4">Status Distribution</h3>
+            <div className="h-64 flex items-center justify-center">
+              <Doughnut 
+                data={statusData} 
+                options={{
+                  plugins: {
+                    legend: {
+                      position: 'bottom',
+                      labels: {
+                        usePointStyle: true,
+                        padding: 20
+                      }
+                    }
+                  },
+                  cutout: '70%'
+                }} 
+              />
             </div>
-            <div className="h-[220px] flex items-center justify-center">
-              <Doughnut data={statusData} />
+            <div className="mt-4 grid grid-cols-2 gap-3 text-center">
+              <div className="bg-blue-50 p-2 rounded-lg">
+                <p className="text-blue-800 font-bold">{activeCount}</p>
+                <p className="text-xs text-blue-600">Active</p>
+              </div>
+              <div className="bg-green-50 p-2 rounded-lg">
+                <p className="text-green-800 font-bold">{completedCount}</p>
+                <p className="text-xs text-green-600">Completed</p>
+              </div>
+              <div className="bg-yellow-50 p-2 rounded-lg">
+                <p className="text-yellow-800 font-bold">{todayPendingCount}</p>
+                <p className="text-xs text-yellow-600">Pending Today</p>
+              </div>
+              <div className="bg-amber-50 p-2 rounded-lg">
+                <p className="text-amber-800 font-bold">{previousPendingCount}</p>
+                <p className="text-xs text-amber-600">Previous Pending</p>
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Records Table */}
-        <div className="bg-white w-full mt-2 border border-gray-200 p-4 rounded-xl flex flex-col gap-4 shadow-sm">
-          <div className="flex items-start justify-between gap-3 flex-col md:flex-row">
-            <div>
-              <h1 className="text-lg font-semibold">
-                <i className="ri-file-text-line"></i> Patient Database
-              </h1>
-              <p className="text-zinc-500 text-xs">
-                View and manage patient information
-              </p>
-            </div>
-            <div className="flex w-full md:w-auto gap-3">
-              <div className="flex-1 flex gap-3 border border-gray-300 bg-gray-50 rounded-lg p-2">
-                <i className="ri-search-line text-gray-400"></i>
-                <input
-                  type="text"
-                  placeholder="Search patient by name..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="outline-0 bg-transparent w-full capitalize"
-                />
+        {/* Patient Records Table */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="p-5 border-b border-gray-200">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-semibold text-gray-800">
+                  <i className="ri-database-2-line mr-2 text-blue-500"></i>
+                  Patient Records
+                </h2>
+                <p className="text-gray-500 text-sm mt-1">
+                  Showing {filteredPatients.length} of {totalPatients} patients
+                </p>
               </div>
-              <div className="border border-gray-300 px-3 py-2 bg-gray-50 rounded-lg text-gray-700 flex gap-2 items-center">
-                <i className="ri-filter-line"></i>
+              <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
+                <div className="relative flex-1">
+                  <i className="ri-search-line absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
+                  <input
+                    type="text"
+                    placeholder="Search patients..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
+                  />
+                </div>
                 <select
-                  className="outline-0 bg-transparent"
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value)}
+                  className="border border-gray-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
                 >
-                  <option value="all">All</option>
+                  <option value="all">All Statuses</option>
                   <option value="active">Active</option>
+                  <option value="pending">Pending</option>
+                  <option value="completed">Completed</option>
                   <option value="inactive">Inactive</option>
                 </select>
               </div>
@@ -246,93 +389,123 @@ const PatientRecords = () => {
           </div>
 
           <div className="overflow-x-auto">
-            <div className="min-w-[720px]">
-              <div className="grid grid-cols-8 py-3 text-gray-500 text-[11px] font-semibold">
-                <h3 className="text-left">Patient Name</h3>
-                <h3 className="text-center">Age</h3>
-                <h3 className="text-center">Phone</h3>
-                <h3 className="text-center">Last Visit</h3>
-                <h3 className="text-center">Condition</h3>
-                <h3 className="text-center">Bills</h3>
-                <h3 className="text-center">View</h3>
-                <h3 className="text-center">Status</h3>
-              </div>
-              <hr className="border-gray-200" />
-              {filteredPatients.map((patient, index) => (
-                <div key={index} className="">
-                  <div className="grid grid-cols-8 items-center py-3 text-xs font-semibold">
-                    <h3 className="text-left truncate capitalize">
-                      {patient.patientname}
-                    </h3>
-                    <h3 className="text-center">{patient.patientage}</h3>
-                    <h3 className="text-center truncate">
-                      {patient.patientphone}
-                    </h3>
-                    <h3 className="text-center">{patient.date}</h3>
-                    <h3 className="text-center truncate">
-                      {patient.patientsymptoms}
-                    </h3>
-                    {/* It show the clear when it was false because bills slip is present in the database */}
-                    <div className="text-center">
-                      {patient.bills ? (
-                        <h3 className="font-bold text-green-600">Clear</h3>
-                      ) : (
-                        <h3 className="font-bold text-red-600">Pending</h3>
-                      )}
-                    </div>
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Patient</th>
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Age</th>
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Phone</th>
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Last Visit</th>
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Condition</th>
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Bills</th>
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">View</th>
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {filteredPatients.length > 0 ? (
+                  filteredPatients.map((patient, index) => {
+                    const status = getStatusBadge(patient);
+                    return (
+                      <tr key={index} className="hover:bg-gray-50 transition">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                          {patient.TokenNumber}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 capitalize">
+                          {patient.patientname}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-center">
+                          {patient.patientage}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-center">
+                          {patient.patientphone}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-center">
+                          {patient.date}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-center max-w-xs truncate">
+                          {patient.patientsymptoms}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-center">
+                          {patient.bills ? (
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                              Clear
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                              Pending
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-center">
+                          <button
+                            onClick={() => {
+                              navigate("/Clinic-Management/patientdetails", {
+                                state: {
+                                  patientId: patient.TokenNumber,
+                                  patientName: patient.patientname,
+                                },
+                              });
+                            }}
+                            className="text-blue-600 hover:text-blue-800 transition"
+                          >
+                            <i className="ri-eye-line text-lg"></i>
+                          </button>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-center">
+                          <button
+                            onClick={() => {
+                              if (!patient.inprogress) {
+                                changeStatus(
+                                  patient.active ? "Inactive" : "Active",
+                                  patient.TokenNumber,
+                                  patient.patientname
+                                );
+                              }
+                            }}
+                            className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium text-white ${status.color} transition ${patient.inprogress ? 'cursor-not-allowed opacity-90' : 'hover:shadow-md'}`}
+                            disabled={patient.inprogress}
+                          >
+                            <i className={`${status.icon} mr-1`}></i>
+                            {status.text}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
+                ) : (
+                  <tr>
+                    <td colSpan="9" className="px-6 py-4 text-center text-sm text-gray-500">
+                      No patients found matching your criteria
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
 
-                    <h3
-                      className="text-center text-sm"
-                      onClick={() => {
-                        navigate("/Clinic-Management/patientdetails", {
-                          state: {
-                            patientId: patient.TokenNumber,
-                            patientName: patient.patientname,
-                          },
-                        });
-                      }}
-                    >
-                      <i class="ri-eye-line"></i>
-                    </h3>
-
-                    <div className="text-center">
-                      {patient.active ? (
-                        <button
-                          className="inline-flex items-center gap-1 bg-emerald-600 text-white py-1 px-3 cursor-pointer rounded-2xl hover:bg-emerald-700 transition"
-                          onClick={() =>
-                            changestatus(
-                              "InActive",
-                              patient.TokenNumber,
-                              patient.patientname
-                            )
-                          }
-                        >
-                          <span className="h-2 w-2 rounded-full bg-white"></span>
-                          Active
-                        </button>
-                      ) : (
-                        <button className="inline-flex items-center gap-1 bg-gray-300 text-gray-800 py-1 px-3 cursor-pointer rounded-2xl hover:bg-gray-400 transition">
-                          <span className="h-2 w-2 rounded-full bg-gray-800"></span>
-                          Inactive
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  <hr className="border-gray-100" />
-                </div>
-              ))}
-              <p className="text-xs mt-5 flex justify-end gap-2 py-2 px-3 rounded-lg">
-                <strong className="font-semibold text-blue-800">Note:</strong>
-                <span>
-                  If you see any bills cleared but status is active, click on
-                  the status to toggle to inactive
-                </span>
-              </p>
-              <ToastContainer />
-            </div>
+          <div className="bg-gray-50 px-6 py-3 border-t border-gray-200">
+            <p className="text-xs text-gray-500">
+              <strong className="font-semibold text-blue-600">Note:</strong> 
+              {" "}Pending cases cannot be modified until completed. Clear all bills to mark a case as completed.
+            </p>
           </div>
         </div>
       </div>
+
+      <ToastContainer 
+        position="top-right"
+        autoClose={3000}
+        hideProgressBar={false}
+        newestOnTop={true}
+        closeOnClick
+        rtl={false}
+        pauseOnFocusLoss
+        draggable
+        pauseOnHover
+        theme="colored"
+      />
     </div>
   );
 };
